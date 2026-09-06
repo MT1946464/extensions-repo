@@ -17,7 +17,7 @@ PY
 
 (
   cd "$NATIVE_DIR"
-  ./gradlew :src:en:lunarx:assembleDebug --stacktrace
+  gradle :src:en:lunarx:assembleDebug --stacktrace
 )
 
 APK_PATH=$(find "$MODULE/build/outputs/apk/debug" -type f -name '*.apk' | head -n1)
