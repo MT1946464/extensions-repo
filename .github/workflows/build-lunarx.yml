@@ -51,7 +51,7 @@ jobs:
           gradle = Path('source/src/all/lunaranime/build.gradle.kts')
           text = gradle.read_text()
           replacements = {
-              'versionCode = 12': 'versionCode = 13',
+              'versionCode = 12': 'versionCode = 14',
               'baseUrl = "https://lunaranime.ru"': 'baseUrl = "https://lunarx.to"',
           }
           for old, new in replacements.items():
@@ -62,11 +62,58 @@ jobs:
 
           source = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt')
           text = source.read_text()
-          old = 'private const val API_URL = "https://api.lunaranime.ru"'
-          new = 'private const val API_URL = "https://api.lunarx.to"'
-          if old not in text:
-              raise SystemExit(f'Expected API URL not found in {source}')
-          source.write_text(text.replace(old, new))
+
+          replacements = {
+              'private const val API_URL = "https://api.lunaranime.ru"': 'private const val API_URL = "https://api.lunarx.to"',
+              'private const val CDN_URL = "https://storage.lunaranime.ru"': 'private const val CDN_URL = "https://vault.lunarx.to"',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Expected text not found in {source}: {old}')
+              text = text.replace(old, new)
+
+          old_interceptor = '''        .addInterceptor { chain ->
+            val request = chain.request()
+            val url = request.url.toString()
+            if (url.contains("storage.lunaranime.ru")) {
+                val newRequest = request.newBuilder()
+                    .header("Referer", "$baseUrl/")
+                    .build()
+                chain.proceed(newRequest)
+            } else {
+                chain.proceed(request)
+            }
+        }'''
+
+          new_interceptor = '''        .addInterceptor { chain ->
+            val request = chain.request()
+            val requestUrl = request.url
+            val isOldStorage = requestUrl.host == "storage.lunaranime.ru"
+            val isNewStorage = requestUrl.host == "vault.lunarx.to"
+
+            if (isOldStorage || isNewStorage) {
+                val effectiveUrl = if (isOldStorage) {
+                    requestUrl.newBuilder()
+                        .host("vault.lunarx.to")
+                        .build()
+                } else {
+                    requestUrl
+                }
+
+                val newRequest = request.newBuilder()
+                    .url(effectiveUrl)
+                    .header("Referer", "$baseUrl/")
+                    .build()
+                chain.proceed(newRequest)
+            } else {
+                chain.proceed(request)
+            }
+        }'''
+
+          if old_interceptor not in text:
+              raise SystemExit(f'Expected storage interceptor not found in {source}')
+          text = text.replace(old_interceptor, new_interceptor)
+          source.write_text(text)
           PY
 
       - name: Build Lunar Manga APK
@@ -118,7 +165,7 @@ jobs:
               'pkg': info['packageName'],
               'apk': apk.name,
               'lang': 'all',
-              'code': 13,
+              'code': 14,
               'version': info['versionName'],
               'sources': sources,
           }
@@ -133,7 +180,8 @@ jobs:
 
           (repo / 'README-LUNARX.md').write_text(
               '# LunarX Tachimanga extension\n\n'
-              'Custom Lunar Manga build targeting `https://lunarx.to` and `https://api.lunarx.to`.\n\n'
+              'Custom Lunar Manga build targeting `https://lunarx.to`, `https://api.lunarx.to`, and `https://vault.lunarx.to`.\n\n'
+              'The build also rewrites legacy `storage.lunaranime.ru` image URLs to `vault.lunarx.to`.\n\n'
               'Tachimanga repository URL:\n\n'
               '`https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json`\n'
           )
