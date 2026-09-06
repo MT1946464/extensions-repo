@@ -33,15 +33,6 @@ jobs:
           path: source
           persist-credentials: false
 
-      - name: Import newer Lunar decryptor prototype
-        shell: bash
-        run: |
-          # PR #18429 directly targeted "Failed to find payload seeds".  Keep the
-          # current Keiyoushi source tree, but transplant only its LunarDecryptor.
-          git -C source fetch --depth=1 https://github.com/MuhamadSyabitHidayattulloh/extensions-source.git faa5be976cbd5e80210d11c4088d65aefb802e13
-          git -C source show FETCH_HEAD:src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt \
-            > source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt
-
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
@@ -54,10 +45,12 @@ jobs:
       - name: Patch build for Tachimanga and LunarX
         shell: bash
         run: |
+          cp repo/lunarx-patches/LunarDecryptor.kt \
+            source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt
+
           python3 - <<'PY'
           from pathlib import Path
 
-          # Make this a distinct extension instead of colliding with Keiyoushi's package.
           gradle = Path('source/src/all/lunaranime/build.gradle.kts')
           text = gradle.read_text()
           text = text.replace('name = "Lunar Manga"', 'name = "LunarX Manga"')
@@ -69,7 +62,6 @@ jobs:
           text = text.replace(marker, marker + '    pkgName = "all.lunarx"\n', 1)
           gradle.write_text(text)
 
-          # Tachimanga compatibility.
           versions = Path('source/gradle/kei.versions.toml')
           text = versions.read_text()
           if 'android-sdk-min = "26"' not in text:
@@ -82,16 +74,6 @@ jobs:
               raise SystemExit('Expected commented -dontoptimize rule not found')
           proguard.write_text(text.replace('#-dontoptimize', '-dontoptimize', 1))
 
-          # The prototype predates Keiyoushi's current asJsoup package move.
-          decryptor = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt')
-          text = decryptor.read_text()
-          text = text.replace(
-              'import eu.kanade.tachiyomi.util.asJsoup',
-              'import keiyoushi.utils.asJsoup',
-          )
-          decryptor.write_text(text)
-
-          # Lunar domain migration + switch the chapter path to the newer decryptor API.
           lunar = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt')
           text = lunar.read_text()
           text = text.replace('https://api.lunaranime.ru', 'https://api.lunarx.to')
@@ -108,8 +90,7 @@ jobs:
           new_pages = '''        // Required request or fake images are returned.
         viewChapter(slug, chapterNumber, language)
 
-        // LunarX changed its chapter payload format.  The updated decryptor fetches
-        // the chapter challenge itself and supports the newer token/session format.
+        // Updated LunarX token/session payload path.
         val decryptedImages = crypto.getChapterImages(slug, chapterNumber, language)'''
           if old_pages not in text:
               raise SystemExit('Expected old chapter decryption block not found')
@@ -121,7 +102,6 @@ jobs:
               raise SystemExit('Expected imageRequest line not found')
           text = text.replace(old_image, new_image, 1)
 
-          # Accept both LunarX storage hostnames when adding the required Referer.
           text = text.replace(
               'if (url.contains("vault.lunarx.to")) {',
               'if (url.contains("vault.lunarx.to") || url.contains("storage.lunarx.to")) {',
@@ -225,7 +205,7 @@ jobs:
               'Repository URL: `' + repo_url + '`\n\n'
               'Direct APK: `' + apk_url + '`\n\n'
               'Direct JAR: `' + jar_url + '`\n\n'
-              'Compatibility changes: minSdk 21, ProGuard/R8 optimization disabled, unique package `eu.kanade.tachiyomi.extension.all.lunarx`, LunarX domains, and updated Lunar chapter payload decryptor.\n'
+              'Compatibility changes: minSdk 21, optimization disabled, unique package, LunarX domains, and updated chapter payload decryptor.\n'
           )
           PY
 
