@@ -1,0 +1,154 @@
+name: Build LunarX for Tachimanga
+
+on:
+  push:
+    branches:
+      - lunarx
+    paths:
+      - '.github/workflows/build-lunarx.yml'
+      - 'lunarx-build-trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout custom repository branch
+        uses: actions/checkout@v4
+        with:
+          ref: lunarx
+          path: repo
+          persist-credentials: true
+
+      - name: Checkout Keiyoushi extension source
+        uses: actions/checkout@v4
+        with:
+          repository: keiyoushi/extensions-source
+          ref: main
+          path: source
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Patch Lunar Manga for LunarX
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle = Path('source/src/all/lunaranime/build.gradle.kts')
+          text = gradle.read_text()
+          replacements = {
+              'versionCode = 12': 'versionCode = 13',
+              'baseUrl = "https://lunaranime.ru"': 'baseUrl = "https://lunarx.to"',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Expected text not found in {gradle}: {old}')
+              text = text.replace(old, new)
+          gradle.write_text(text)
+
+          source = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt')
+          text = source.read_text()
+          old = 'private const val API_URL = "https://api.lunaranime.ru"'
+          new = 'private const val API_URL = "https://api.lunarx.to"'
+          if old not in text:
+              raise SystemExit(f'Expected API URL not found in {source}')
+          source.write_text(text.replace(old, new))
+          PY
+
+      - name: Build Lunar Manga APK
+        working-directory: source
+        run: ./gradlew :src:all:lunaranime:assembleRelease
+
+      - name: Publish APK and Tachimanga legacy index
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          module = Path('source/src/all/lunaranime/build')
+          info_path = module / 'keiyoushi-source-info.json'
+          if not info_path.exists():
+              raise SystemExit(f'Missing source metadata: {info_path}')
+
+          info = json.loads(info_path.read_text())
+          apks = list((module / 'outputs/apk/release').glob('*.apk'))
+          if len(apks) != 1:
+              raise SystemExit(f'Expected exactly one APK, found {len(apks)}: {apks}')
+          apk = apks[0]
+
+          repo = Path('repo')
+          apk_dir = repo / 'apk'
+          apk_dir.mkdir(parents=True, exist_ok=True)
+
+          # Remove an earlier custom Lunar build so the branch stays tidy.
+          for old_apk in apk_dir.glob('tachiyomi-all.lunaranime-v*.apk'):
+              old_apk.unlink()
+          shutil.copy2(apk, apk_dir / apk.name)
+
+          sources = []
+          for source in info['sources']:
+              item = {
+                  'name': source['name'],
+                  'lang': source['lang'],
+                  'id': str(source['id']),
+                  'baseUrl': source['baseUrl'],
+              }
+              if 'versionId' in source:
+                  item['versionId'] = source['versionId']
+              sources.append(item)
+
+          entry = {
+              'name': f"Tachiyomi: {info['name']}",
+              'pkg': info['packageName'],
+              'apk': apk.name,
+              'lang': 'all',
+              'code': 13,
+              'version': info['versionName'],
+              'sources': sources,
+          }
+
+          (repo / 'index.min.json').write_text(
+              json.dumps([entry], ensure_ascii=False, separators=(',', ':')) + '\n'
+          )
+
+          (repo / 'index.html').write_text(
+              '<!doctype html><html><body><a href="apk/' + apk.name + '">Tachiyomi: Lunar Manga</a></body></html>\n'
+          )
+
+          (repo / 'README-LUNARX.md').write_text(
+              '# LunarX Tachimanga extension\n\n'
+              'Custom Lunar Manga build targeting `https://lunarx.to` and `https://api.lunarx.to`.\n\n'
+              'Tachimanga repository URL:\n\n'
+              '`https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json`\n'
+          )
+          PY
+
+      - name: Commit published extension
+        working-directory: repo
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apk index.min.json index.html README-LUNARX.md
+          if git diff --cached --quiet; then
+            echo "No published changes"
+            exit 0
+          fi
+          git commit -m "Build Lunar Manga for lunarx.to"
+          git push origin HEAD:lunarx
