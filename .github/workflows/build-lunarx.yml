@@ -60,19 +60,20 @@ jobs:
           text = text.replace(marker, marker + '    pkgName = "all.lunarx"\n', 1)
           gradle.write_text(text)
 
-          # Tachimanga compatibility: its loader requires Android API 21-compatible bytecode.
+          # Tachimanga compatibility: lower Android minimum SDK from Keiyoushi's 26 to 21.
           versions = Path('source/gradle/kei.versions.toml')
           text = versions.read_text()
           if 'android-sdk-min = "26"' not in text:
               raise SystemExit('Expected Keiyoushi minSdk 26 not found')
           versions.write_text(text.replace('android-sdk-min = "26"', 'android-sdk-min = "21"', 1))
 
-          # Tachimanga currently rejects/has trouble with R8/ProGuard-optimized custom builds.
-          plugin = Path('source/gradle/build-logic/src/main/kotlin/ExtensionPlugin.kt')
-          text = plugin.read_text()
-          if 'isMinifyEnabled = true' not in text:
-              raise SystemExit('Expected minification setting not found')
-          plugin.write_text(text.replace('isMinifyEnabled = true', 'isMinifyEnabled = false', 1))
+          # Keep the Keiyoushi minification/JAR pipeline, but disable optimization exactly as
+          # Tachimanga requests. This still produces the mapping configuration the JAR task needs.
+          proguard = Path('source/common/proguard-rules.pro')
+          text = proguard.read_text()
+          if '#-dontoptimize' not in text:
+              raise SystemExit('Expected commented -dontoptimize rule not found')
+          proguard.write_text(text.replace('#-dontoptimize', '-dontoptimize', 1))
 
           # Lunar domain migration.
           lunar = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt')
@@ -177,7 +178,7 @@ jobs:
               'Independent Tachimanga compatibility build.\n\n'
               'Repository URL: `' + repo_url + '`\n\n'
               'Direct JAR: `' + jar_url + '`\n\n'
-              'Compatibility changes: minSdk 21, R8/ProGuard minification disabled, unique package `eu.kanade.tachiyomi.extension.all.lunarx`, and LunarX domains.\n'
+              'Compatibility changes: minSdk 21, ProGuard/R8 optimization disabled, unique package `eu.kanade.tachiyomi.extension.all.lunarx`, and LunarX domains.\n'
           )
           PY
 
