@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION_CODE=17
+VERSION_CODE=18
 
 DECRYPTOR_DST="source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt"
 LUNAR_DST="source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt"
@@ -11,7 +11,7 @@ cp repo/lunarx-patches/LunarDecryptor.kt "$DECRYPTOR_DST"
 python3 - <<'PY'
 from pathlib import Path
 
-version_code = 17
+version_code = 18
 
 gradle = Path('source/src/all/lunaranime/build.gradle.kts')
 text = gradle.read_text()
@@ -109,7 +109,7 @@ if old_pages not in text:
 text = text.replace(old_pages, new_pages, 1)
 
 old_image = 'return GET(page.imageUrl!!, imageHeaders)'
-new_image = 'return GET(page.imageUrl!!.replace("https://storage.lunaranime.ru", "https://vault.lunarx.to"), imageHeaders)'
+new_image = 'return GET(page.imageUrl!!.replace("https://storage.lunaranime.ru", "https://vault.lunarx.to"), imageHeaders.newBuilder().removeAll("Origin").set("Referer", "$baseUrl/").set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0").build())'
 if old_image not in text:
     raise SystemExit('Expected imageRequest line not found')
 text = text.replace(old_image, new_image, 1)
@@ -173,7 +173,7 @@ import json
 import shutil
 from pathlib import Path
 
-version_code = 17
+version_code = 18
 module = Path('source/src/all/lunaranime/build')
 info_path = module / 'keiyoushi-source-info.json'
 if not info_path.exists():
@@ -274,5 +274,5 @@ if git diff --cached --quiet; then
   echo "No published changes"
   exit 0
 fi
-git commit -m "Publish LunarX v1.4.17 endpoint and repo-signing fix"
+git commit -m "Publish LunarX v1.4.18 image header fix"
 git push origin HEAD:lunarx
