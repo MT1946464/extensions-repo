@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION_CODE=16
+VERSION_CODE=17
 
 DECRYPTOR_DST="source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarDecryptor.kt"
 LUNAR_DST="source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt"
@@ -11,7 +11,7 @@ cp repo/lunarx-patches/LunarDecryptor.kt "$DECRYPTOR_DST"
 python3 - <<'PY'
 from pathlib import Path
 
-version_code = 16
+version_code = 17
 
 gradle = Path('source/src/all/lunaranime/build.gradle.kts')
 text = gradle.read_text()
@@ -41,6 +41,58 @@ text = lunar.read_text()
 text = text.replace('https://api.lunaranime.ru', 'https://api.lunarx.to')
 text = text.replace('https://storage.lunaranime.ru', 'https://vault.lunarx.to')
 
+# LunarX API requires both Referer and Origin.
+old_headers = '''    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("Referer", "$baseUrl/")'''
+new_headers = '''    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .add("Referer", "$baseUrl/")
+        .add("Origin", baseUrl)'''
+if old_headers not in text:
+    raise SystemExit('Expected headersBuilder block not found')
+text = text.replace(old_headers, new_headers, 1)
+
+# The old /api/manga/password/info/<slug> call now 404s on LunarX.
+old_chapters = '''        val passwordUrl = API_URL.toHttpUrl().newBuilder()
+            .addPathSegments("api/manga/password/info")
+            .addPathSegment(slug)
+            .build()
+        val passwordRequest = GET(passwordUrl.toString(), headers)
+        val passwordInfo = client.newCall(passwordRequest).execute().parseAs<LunarPasswordInfoResponse>()
+
+        val requestUrl = API_URL.toHttpUrl().newBuilder()
+            .addPathSegments("api/manga")
+            .addPathSegment(slug)
+            .build()
+        val request = GET(requestUrl.toString(), headers)
+
+        val result = client.newCall(request).execute().parseAs<LunarChapterListResponse>()
+
+        result.data.filter {
+            lang == "all" || it.language == internalLang
+        }.map { chapter ->
+            val isLocked = passwordInfo.hasSeriesPassword ||
+                passwordInfo.chapterPasswords.any {
+                    it.chapterNumber == chapter.chapter && (it.language == null || it.language == chapter.language)
+                }
+            chapter.toSChapter(slug, isLocked)
+        }.reversed()'''
+new_chapters = '''        val requestUrl = API_URL.toHttpUrl().newBuilder()
+            .addPathSegments("api/manga")
+            .addPathSegment(slug)
+            .build()
+        val request = GET(requestUrl.toString(), headers)
+
+        val result = client.newCall(request).execute().parseAs<LunarChapterListResponse>()
+
+        result.data.filter {
+            lang == "all" || it.language == internalLang
+        }.map { chapter ->
+            chapter.toSChapter(slug, false)
+        }.reversed()'''
+if old_chapters not in text:
+    raise SystemExit('Expected legacy chapter-list block not found')
+text = text.replace(old_chapters, new_chapters, 1)
+
 old_pages = '''        val response = client.newCall(GET(chapterUrl)).execute()
         if (!response.isSuccessful) error("HTTP ${response.code} fetching chapter")
 
@@ -64,7 +116,6 @@ if old_image not in text:
     raise SystemExit('Expected imageRequest line not found')
 text = text.replace(old_image, new_image, 1)
 
-# The global domain replacement above changes the old interceptor string to vault.
 text = text.replace(
     'if (url.contains("vault.lunarx.to")) {',
     'if (url.contains("vault.lunarx.to") || url.contains("storage.lunarx.to")) {',
@@ -77,17 +128,63 @@ PY
   ./gradlew :src:all:lunaranime:assembleRelease
 )
 
+# Sign the APK so repo.json can contain the real certificate fingerprint.
+APK_PATH=$(find source/src/all/lunaranime/build/outputs/apk/release -type f -name '*.apk' | head -n1)
+if [[ -z "${APK_PATH:-}" ]]; then
+  echo "No APK found to sign" >&2
+  exit 1
+fi
+
+KEYSTORE="source/lunarx-ci-signing.jks"
+keytool -genkeypair \
+  -keystore "$KEYSTORE" \
+  -storepass lunarxpass \
+  -keypass lunarxpass \
+  -alias lunarx \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 3650 \
+  -dname "CN=LunarX Tachimanga, OU=Extensions, O=MT1946464, C=AU" \
+  -noprompt >/dev/null 2>&1
+
+APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n1)
+if [[ -z "${APKSIGNER:-}" ]]; then
+  echo "apksigner not found" >&2
+  exit 1
+fi
+
+"$APKSIGNER" sign \
+  --ks "$KEYSTORE" \
+  --ks-key-alias lunarx \
+  --ks-pass pass:lunarxpass \
+  --key-pass pass:lunarxpass \
+  "$APK_PATH"
+
+SIGNING_FINGERPRINT=$("$APKSIGNER" verify --print-certs "$APK_PATH" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}')
+if [[ -z "${SIGNING_FINGERPRINT:-}" ]]; then
+  echo "Could not determine signing certificate fingerprint" >&2
+  exit 1
+fi
+printf '%s\n' "$SIGNING_FINGERPRINT" > source/lunarx-signing-fingerprint.txt
+
+echo "LunarX signing fingerprint: $SIGNING_FINGERPRINT"
+
 python3 - <<'PY'
 import json
 import shutil
 from pathlib import Path
 
-version_code = 16
+version_code = 17
 module = Path('source/src/all/lunaranime/build')
 info_path = module / 'keiyoushi-source-info.json'
 if not info_path.exists():
     raise SystemExit(f'Missing source metadata: {info_path}')
 info = json.loads(info_path.read_text())
+
+fingerprint_path = Path('source/lunarx-signing-fingerprint.txt')
+if not fingerprint_path.exists():
+    raise SystemExit('Missing signing fingerprint')
+signing_fingerprint = fingerprint_path.read_text().strip()
 
 apks = list((module / 'outputs/apk/release').glob('*.apk'))
 jars = list((module / 'outputs/jar/release').glob('*.jar'))
@@ -148,6 +245,7 @@ for stale in ('index.json', 'index.pb', 'release-assets.json'):
         'meta': {
             'name': 'MT1946464 LunarX',
             'website': 'https://github.com/MT1946464/extensions-repo/tree/lunarx',
+            'signingKeyFingerprint': signing_fingerprint,
         }
     }, indent=2) + '\n'
 )
@@ -165,7 +263,7 @@ jar_url = 'https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/ap
     'Repository URL: `' + repo_url + '`\n\n'
     'Direct APK: `' + apk_url + '`\n\n'
     'Direct JAR: `' + jar_url + '`\n\n'
-    'Compatibility changes: minSdk 21, optimization disabled, unique package, LunarX domains, and updated chapter payload decryptor.\n'
+    'Compatibility changes: minSdk 21, optimization disabled, unique package, LunarX domains, updated chapter payload decryptor, Origin header, obsolete password endpoint removed, and APK signing metadata.\n'
 )
 PY
 
@@ -177,5 +275,5 @@ if git diff --cached --quiet; then
   echo "No published changes"
   exit 0
 fi
-git commit -m "Publish LunarX v1.4.16 payload decryptor test"
+git commit -m "Publish LunarX v1.4.17 endpoint and repo-signing fix"
 git push origin HEAD:lunarx
