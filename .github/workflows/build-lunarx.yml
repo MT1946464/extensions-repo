@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/build-lunarx.yml'
       - 'lunarx-build.sh'
+      - 'lunarx-v18-prep.py'
       - 'lunarx-patches/**'
       - 'lunarx-build-trigger.txt'
   workflow_dispatch:
@@ -43,6 +44,9 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare LunarX image-header fix
+        run: python3 repo/lunarx-v18-prep.py
 
       - name: Build and publish LunarX
         run: bash repo/lunarx-build.sh
