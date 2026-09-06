@@ -41,7 +41,6 @@ text = lunar.read_text()
 text = text.replace('https://api.lunaranime.ru', 'https://api.lunarx.to')
 text = text.replace('https://storage.lunaranime.ru', 'https://vault.lunarx.to')
 
-# LunarX API requires both Referer and Origin.
 old_headers = '''    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .add("Referer", "$baseUrl/")'''
 new_headers = '''    override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -51,7 +50,6 @@ if old_headers not in text:
     raise SystemExit('Expected headersBuilder block not found')
 text = text.replace(old_headers, new_headers, 1)
 
-# The old /api/manga/password/info/<slug> call now 404s on LunarX.
 old_chapters = '''        val passwordUrl = API_URL.toHttpUrl().newBuilder()
             .addPathSegments("api/manga/password/info")
             .addPathSegment(slug)
@@ -128,7 +126,6 @@ PY
   ./gradlew :src:all:lunaranime:assembleRelease
 )
 
-# Sign the APK so repo.json can contain the real certificate fingerprint.
 APK_PATH=$(find source/src/all/lunaranime/build/outputs/apk/release -type f -name '*.apk' | head -n1)
 if [[ -z "${APK_PATH:-}" ]]; then
   echo "No APK found to sign" >&2
@@ -160,9 +157,11 @@ fi
   --key-pass pass:lunarxpass \
   "$APK_PATH"
 
-SIGNING_FINGERPRINT=$("$APKSIGNER" verify --print-certs "$APK_PATH" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}')
-if [[ -z "${SIGNING_FINGERPRINT:-}" ]]; then
-  echo "Could not determine signing certificate fingerprint" >&2
+CERT_OUTPUT=$("$APKSIGNER" verify --print-certs "$APK_PATH")
+echo "$CERT_OUTPUT"
+SIGNING_FINGERPRINT=$(printf '%s\n' "$CERT_OUTPUT" | awk '/certificate SHA-256 digest/ {print tolower($NF); exit}')
+if [[ ! "$SIGNING_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Invalid signing certificate fingerprint: $SIGNING_FINGERPRINT" >&2
   exit 1
 fi
 printf '%s\n' "$SIGNING_FINGERPRINT" > source/lunarx-signing-fingerprint.txt
