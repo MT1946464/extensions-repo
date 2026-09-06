@@ -120,7 +120,6 @@ jobs:
           apk_dir.mkdir(parents=True, exist_ok=True)
           jar_dir.mkdir(parents=True, exist_ok=True)
 
-          # Remove our earlier colliding Lunar builds.
           for pattern in ('tachiyomi-all.lunaranime-v*', 'tachiyomi-all.lunarx-v*'):
               for old in apk_dir.glob(pattern):
                   old.unlink()
@@ -129,9 +128,7 @@ jobs:
 
           shutil.copy2(apk, apk_dir / apk.name)
           shutil.copy2(jar, jar_dir / jar.name)
-
-          # Legacy Tachimanga repository resolution uses the apk/ directory even when
-          # the extension filename itself ends in .jar, so keep a JAR copy there too.
+          # Keep a JAR copy under apk/ as a convenient direct-install URL too.
           shutil.copy2(jar, apk_dir / jar.name)
 
           sources = []
@@ -146,10 +143,11 @@ jobs:
                   item['versionId'] = src['versionId']
               sources.append(item)
 
+          # Tachimanga repository indexes expect the apk field to name an APK.
           entry = {
               'name': f"Tachiyomi: {info['name']}",
               'pkg': info['packageName'],
-              'apk': jar.name,
+              'apk': apk.name,
               'lang': 'all',
               'code': 15,
               'version': info['versionName'],
@@ -160,23 +158,33 @@ jobs:
               json.dumps([entry], ensure_ascii=False, separators=(',', ':')) + '\n'
           )
 
-          # Remove inherited Keiyoushi v2 metadata. It points back to Keiyoushi and causes
-          # this custom legacy repository to be identified as the Keiyoushi repository.
-          for stale in ('repo.json', 'index.json', 'index.pb', 'release-assets.json'):
+          # Remove inherited Keiyoushi v2 files, but keep our own repo.json metadata.
+          for stale in ('index.json', 'index.pb', 'release-assets.json'):
               p = repo / stale
               if p.exists():
                   p.unlink()
 
-          jar_url = 'https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/apk/' + jar.name
+          (repo / 'repo.json').write_text(
+              json.dumps({
+                  'meta': {
+                      'name': 'MT1946464 LunarX',
+                      'website': 'https://github.com/MT1946464/extensions-repo/tree/lunarx',
+                  }
+              }, indent=2) + '\n'
+          )
+
           repo_url = 'https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json'
+          apk_url = 'https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/apk/' + apk.name
+          jar_url = 'https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/apk/' + jar.name
 
           (repo / 'index.html').write_text(
-              '<!doctype html><html><body><a href="apk/' + jar.name + '">Tachiyomi: LunarX Manga</a></body></html>\n'
+              '<!doctype html><html><body><a href="apk/' + apk.name + '">Tachiyomi: LunarX Manga</a></body></html>\n'
           )
           (repo / 'README-LUNARX.md').write_text(
               '# LunarX Manga for Tachimanga\n\n'
               'Independent Tachimanga compatibility build.\n\n'
               'Repository URL: `' + repo_url + '`\n\n'
+              'Direct APK: `' + apk_url + '`\n\n'
               'Direct JAR: `' + jar_url + '`\n\n'
               'Compatibility changes: minSdk 21, ProGuard/R8 optimization disabled, unique package `eu.kanade.tachiyomi.extension.all.lunarx`, and LunarX domains.\n'
           )
@@ -193,5 +201,5 @@ jobs:
             echo "No published changes"
             exit 0
           fi
-          git commit -m "Publish Tachimanga-compatible LunarX v1.4.15"
+          git commit -m "Fix LunarX Tachimanga repository metadata"
           git push origin HEAD:lunarx
