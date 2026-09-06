@@ -1,6 +1,7 @@
 {
   "meta": {
     "name": "MT1946464 LunarX",
-    "website": "https://github.com/MT1946464/extensions-repo/tree/lunarx"
+    "website": "https://github.com/MT1946464/extensions-repo/tree/lunarx",
+    "signingKeyFingerprint": "certificate sha-256 digest"
   }
 }
