@@ -50,69 +50,19 @@ jobs:
 
           gradle = Path('source/src/all/lunaranime/build.gradle.kts')
           text = gradle.read_text()
-          replacements = {
-              'versionCode = 12': 'versionCode = 14',
-              'baseUrl = "https://lunaranime.ru"': 'baseUrl = "https://lunarx.to"',
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f'Expected text not found in {gradle}: {old}')
-              text = text.replace(old, new)
+          text = text.replace('versionCode = 12', 'versionCode = 14')
+          text = text.replace('baseUrl = "https://lunaranime.ru"', 'baseUrl = "https://lunarx.to"')
           gradle.write_text(text)
 
           source = Path('source/src/all/lunaranime/src/eu/kanade/tachiyomi/extension/all/lunaranime/LunarAnime.kt')
           text = source.read_text()
-
-          replacements = {
-              'private const val API_URL = "https://api.lunaranime.ru"': 'private const val API_URL = "https://api.lunarx.to"',
-              'private const val CDN_URL = "https://storage.lunaranime.ru"': 'private const val CDN_URL = "https://vault.lunarx.to"',
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f'Expected text not found in {source}: {old}')
-              text = text.replace(old, new)
-
-          old_interceptor = '''        .addInterceptor { chain ->
-            val request = chain.request()
-            val url = request.url.toString()
-            if (url.contains("storage.lunaranime.ru")) {
-                val newRequest = request.newBuilder()
-                    .header("Referer", "$baseUrl/")
-                    .build()
-                chain.proceed(newRequest)
-            } else {
-                chain.proceed(request)
-            }
-        }'''
-
-          new_interceptor = '''        .addInterceptor { chain ->
-            val request = chain.request()
-            val requestUrl = request.url
-            val isOldStorage = requestUrl.host == "storage.lunaranime.ru"
-            val isNewStorage = requestUrl.host == "vault.lunarx.to"
-
-            if (isOldStorage || isNewStorage) {
-                val effectiveUrl = if (isOldStorage) {
-                    requestUrl.newBuilder()
-                        .host("vault.lunarx.to")
-                        .build()
-                } else {
-                    requestUrl
-                }
-
-                val newRequest = request.newBuilder()
-                    .url(effectiveUrl)
-                    .header("Referer", "$baseUrl/")
-                    .build()
-                chain.proceed(newRequest)
-            } else {
-                chain.proceed(request)
-            }
-        }'''
-
-          if old_interceptor not in text:
-              raise SystemExit(f'Expected storage interceptor not found in {source}')
-          text = text.replace(old_interceptor, new_interceptor)
+          text = text.replace('https://api.lunaranime.ru', 'https://api.lunarx.to')
+          text = text.replace('https://storage.lunaranime.ru', 'https://vault.lunarx.to')
+          old = 'return GET(page.imageUrl!!, imageHeaders)'
+          new = 'return GET(page.imageUrl!!.replace("https://storage.lunaranime.ru", "https://vault.lunarx.to"), imageHeaders)'
+          if old not in text:
+              raise SystemExit('Expected imageRequest line not found')
+          text = text.replace(old, new)
           source.write_text(text)
           PY
 
@@ -142,22 +92,18 @@ jobs:
           repo = Path('repo')
           apk_dir = repo / 'apk'
           apk_dir.mkdir(parents=True, exist_ok=True)
-
-          # Remove an earlier custom Lunar build so the branch stays tidy.
           for old_apk in apk_dir.glob('tachiyomi-all.lunaranime-v*.apk'):
               old_apk.unlink()
           shutil.copy2(apk, apk_dir / apk.name)
 
           sources = []
-          for source in info['sources']:
+          for source_item in info['sources']:
               item = {
-                  'name': source['name'],
-                  'lang': source['lang'],
-                  'id': str(source['id']),
-                  'baseUrl': source['baseUrl'],
+                  'name': source_item['name'],
+                  'lang': source_item['lang'],
+                  'id': str(source_item['id']),
+                  'baseUrl': source_item['baseUrl'],
               }
-              if 'versionId' in source:
-                  item['versionId'] = source['versionId']
               sources.append(item)
 
           entry = {
@@ -169,22 +115,9 @@ jobs:
               'version': info['versionName'],
               'sources': sources,
           }
-
-          (repo / 'index.min.json').write_text(
-              json.dumps([entry], ensure_ascii=False, separators=(',', ':')) + '\n'
-          )
-
-          (repo / 'index.html').write_text(
-              '<!doctype html><html><body><a href="apk/' + apk.name + '">Tachiyomi: Lunar Manga</a></body></html>\n'
-          )
-
-          (repo / 'README-LUNARX.md').write_text(
-              '# LunarX Tachimanga extension\n\n'
-              'Custom Lunar Manga build targeting `https://lunarx.to`, `https://api.lunarx.to`, and `https://vault.lunarx.to`.\n\n'
-              'The build also rewrites legacy `storage.lunaranime.ru` image URLs to `vault.lunarx.to`.\n\n'
-              'Tachimanga repository URL:\n\n'
-              '`https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json`\n'
-          )
+          (repo / 'index.min.json').write_text(json.dumps([entry], separators=(',', ':')) + '\n')
+          (repo / 'index.html').write_text('<!doctype html><html><body><a href="apk/' + apk.name + '">Tachiyomi: Lunar Manga</a></body></html>\n')
+          (repo / 'README-LUNARX.md').write_text('# LunarX Tachimanga extension\n\nCustom Lunar Manga build for lunarx.to.\n')
           PY
 
       - name: Commit published extension
@@ -198,5 +131,5 @@ jobs:
             echo "No published changes"
             exit 0
           fi
-          git commit -m "Build Lunar Manga for lunarx.to"
+          git commit -m "Build Lunar Manga v1.4.14 for lunarx.to"
           git push origin HEAD:lunarx
