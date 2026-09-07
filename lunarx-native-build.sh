@@ -1,28 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION_CODE=21
+VERSION_CODE=22
 NATIVE_DIR="native"
 MODULE="$NATIVE_DIR/src/en/lunarx"
+PACKAGE="eu.kanade.tachiyomi.extension.en.lunarxvaulttest"
+APK_NAME="tachiyomi-en.lunarxvaulttest-v1.4.22.apk"
 
 python3 - <<'PY'
 from pathlib import Path
 
-# Bump the dedicated LunarX extension version.
-p = Path('native/src/en/lunarx/build.gradle.kts')
-text = p.read_text()
-if 'val extVersionCode = 7' not in text:
-    raise SystemExit('Expected LunarX upstream version 7 not found')
-text = text.replace('val extVersionCode = 7', 'val extVersionCode = 21', 1)
-p.write_text(text)
+# Give this diagnostic build a completely fresh app/package identity so
+# Tachimanga cannot reuse the previously installed LunarX extension.
+gradle = Path('native/src/en/lunarx/build.gradle.kts')
+text = gradle.read_text()
+for old, new in [
+    ('val extName = "LunarX"', 'val extName = "LunarX Vault Test"'),
+    ('val extVersionCode = 7', 'val extVersionCode = 22'),
+    ('namespace = "eu.kanade.tachiyomi.extension.en.lunarx"', 'namespace = "eu.kanade.tachiyomi.extension.en.lunarxvaulttest"'),
+    ('applicationId = "eu.kanade.tachiyomi.extension.en.lunarx"', 'applicationId = "eu.kanade.tachiyomi.extension.en.lunarxvaulttest"'),
+]:
+    if old not in text:
+        raise SystemExit(f'Expected Gradle text not found: {old}')
+    text = text.replace(old, new, 1)
+gradle.write_text(text)
 
 source = Path('native/src/en/lunarx/src/main/kotlin/eu/kanade/tachiyomi/extension/en/lunarx/LunarX.kt')
 text = source.read_text()
 
-# The reader API can return relative image paths. /cdn/... belongs on
-# vault.lunarx.to, whereas /api/... belongs on api.lunarx.to. The upstream
-# implementation sent every leading-slash path to api.lunarx.to, which
-# produces a 404 for real manga images.
+if 'package eu.kanade.tachiyomi.extension.en.lunarx' not in text:
+    raise SystemExit('Expected LunarX package declaration not found')
+text = text.replace(
+    'package eu.kanade.tachiyomi.extension.en.lunarx',
+    'package eu.kanade.tachiyomi.extension.en.lunarxvaulttest',
+    1,
+)
+if 'override val name = "LunarX"' not in text:
+    raise SystemExit('Expected LunarX source name not found')
+text = text.replace('override val name = "LunarX"', 'override val name = "LunarX Vault Test"', 1)
+
+# Confirmed by a live GitHub Actions probe:
+#   vault.lunarx.to/cdn/... -> 200
+#   api.lunarx.to/cdn/...   -> 404
+# Therefore /cdn paths returned by the reader must be routed to Vault.
 old_full = '''                        val full = when {
                             u.startsWith("http") -> u
                             u.startsWith("//") -> "https:" + u
@@ -44,9 +64,8 @@ if old_full not in text:
     raise SystemExit('Expected upstream LunarX image URL normalization block not found')
 text = text.replace(old_full, new_full, 1)
 
-# Match the successful browser image request supplied by the user:
-# root-site Referer, browser UA + image Accept, and no Origin header. Also
-# defensively correct any full API-host /cdn/ URL before requesting it.
+# Match the successful browser image request supplied by the user, and
+# defensively fix any full API-host /cdn URL before the request is sent.
 old_image = '''        val url = page.imageUrl
             ?: throw IOException("LunarX: null image URL")
         Log.d("LunarX", "image -> ${url.take(160)}")
@@ -60,7 +79,7 @@ old_image = '''        val url = page.imageUrl
             .get()
             .build()'''
 new_image = '''        val rawUrl = page.imageUrl
-            ?: throw IOException("LunarX: null image URL")
+            ?: throw IOException("LunarX Vault Test: null image URL")
         val url = rawUrl.replace(
             "https://api.lunarx.to/cdn/",
             "https://vault.lunarx.to/cdn/",
@@ -113,7 +132,7 @@ if [[ ! "$SIGNING_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]; then
   exit 1
 fi
 
-python3 - "$APK_PATH" "$SIGNING_FINGERPRINT" <<'PY'
+python3 - "$APK_PATH" "$SIGNING_FINGERPRINT" "$APK_NAME" <<'PY'
 import json
 import shutil
 import sys
@@ -121,42 +140,42 @@ from pathlib import Path
 
 apk = Path(sys.argv[1])
 fingerprint = sys.argv[2]
+apk_name = sys.argv[3]
 repo = Path('repo')
 apk_dir = repo / 'apk'
 apk_dir.mkdir(parents=True, exist_ok=True)
 
-for old in apk_dir.glob('tachiyomi-en.lunarx-v*.apk'):
+for old in apk_dir.glob('tachiyomi-en.lunarxvaulttest-v*.apk'):
     old.unlink()
-shutil.copy2(apk, apk_dir / apk.name)
+shutil.copy2(apk, apk_dir / apk_name)
 
 entry = {
-    'name': 'Tachiyomi: LunarX',
-    'pkg': 'eu.kanade.tachiyomi.extension.en.lunarx',
-    'apk': apk.name,
+    'name': 'Tachiyomi: LunarX Vault Test',
+    'pkg': 'eu.kanade.tachiyomi.extension.en.lunarxvaulttest',
+    'apk': apk_name,
     'lang': 'en',
-    'code': 21,
-    'version': '1.4.21',
+    'code': 22,
+    'version': '1.4.22',
     'nsfw': 1,
     'sources': [{
-        'name': 'LunarX',
+        'name': 'LunarX Vault Test',
         'lang': 'en',
-        'id': '3044049178005900465',
+        'id': '7381161132566237407',
         'baseUrl': 'https://lunarx.to',
     }],
 }
 (repo / 'index.min.json').write_text(json.dumps([entry], separators=(',', ':')) + '\n')
 (repo / 'repo.json').write_text(json.dumps({
     'meta': {
-        'name': 'MT1946464 LunarX Native',
+        'name': 'MT1946464 LunarX Vault Test',
         'website': 'https://github.com/MT1946464/extensions-repo/tree/lunarx',
         'signingKeyFingerprint': fingerprint,
     }
 }, indent=2) + '\n')
 (repo / 'README-LUNARX.md').write_text(
-    '# LunarX for Tachimanga\n\n'
-    'This build uses the dedicated LunarX reader implementation from codegeasse1/codegeasse-mihon-extension, pinned to commit f9a96725074aee580b27ab39081175de9aee3e11, with extension version code 21 for testing.\n\n'
-    'v1.4.21 routes /cdn/ image paths to vault.lunarx.to instead of api.lunarx.to. A GitHub network probe confirmed the same known image path returns HTTP 200 on Vault and HTTP 404 on the API host.\n\n'
-    'Image requests also match the successful browser capture: root Referer, Chromium/Edge UA, image Accept, and no Origin.\n\n'
+    '# LunarX Vault Test for Tachimanga\n\n'
+    'Fresh package/source identity diagnostic build, based on the dedicated LunarX reader.\n\n'
+    'Confirmed CDN routing: `/cdn/...` is sent to `https://vault.lunarx.to`; `/api/...` remains on `https://api.lunarx.to`.\n\n'
     'Repository URL: `https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json`\n'
 )
 PY
@@ -169,5 +188,5 @@ if git diff --cached --quiet; then
   echo "No changes to publish"
   exit 0
 fi
-git commit -m "Publish native LunarX v1.4.21 Vault CDN routing"
+git commit -m "Publish LunarX Vault Test v1.4.22"
 git push origin HEAD:lunarx
