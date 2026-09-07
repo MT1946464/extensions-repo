@@ -13,55 +13,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Probe clean browser session and Vault image
+      - name: Probe LunarX image hosts
         shell: bash
         run: |
           set -euo pipefail
 
           UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36 Edg/152.0.0.0'
-          ROOT='https://lunarx.to/'
-          CHAPTER='https://lunarx.to/manga/jinx/102?lang=en'
-          IMG='https://vault.lunarx.to/cdn/admin/manga/jinx/101/en/ch101_page_022_vxhvr.jpg'
           ACCEPT='image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+          PATH_PART='/cdn/admin/manga/jinx/101/en/ch101_page_022_vxhvr.jpg'
+          VAULT="https://vault.lunarx.to${PATH_PART}"
+          API="https://api.lunarx.to${PATH_PART}"
 
-          rm -f cookies.txt root.headers chapter.headers
+          echo '=== Vault host ==='
+          CODE=$(curl -L -sS -o /dev/null -w '%{http_code}' "$VAULT" \
+            -H "User-Agent: $UA" -H "Accept: $ACCEPT" -H 'Referer: https://lunarx.to/')
+          echo "vault_status=$CODE"
 
-          echo '=== 1. Exact image request with NO cookies ==='
-          CODE=$(curl -L -sS -o /dev/null -w '%{http_code}' "$IMG" \
-            -H "User-Agent: $UA" \
-            -H "Accept: $ACCEPT" \
-            -H 'Referer: https://lunarx.to/')
-          echo "status=$CODE"
+          echo '=== Same path on API host ==='
+          CODE=$(curl -L -sS -o /dev/null -w '%{http_code}' "$API" \
+            -H "User-Agent: $UA" -H "Accept: $ACCEPT" -H 'Referer: https://lunarx.to/')
+          echo "api_status=$CODE"
 
-          echo '=== 2. Visit LunarX root and save cookies ==='
-          ROOT_CODE=$(curl -L -sS -D root.headers -c cookies.txt -o /dev/null -w '%{http_code}' "$ROOT" \
-            -H "User-Agent: $UA")
-          echo "root_status=$ROOT_CODE"
-          echo 'Set-Cookie names from root:'
-          awk 'BEGIN{IGNORECASE=1} /^set-cookie:/ {v=$0; sub(/^set-cookie:[[:space:]]*/,"",v); split(v,a,"="); print a[1]}' root.headers | sort -u || true
-          echo 'Cookie-jar names after root:'
-          awk 'BEGIN{FS="\t"} !/^#/ && NF>=7 {print $6}' cookies.txt | sort -u || true
-
-          echo '=== 3. Visit chapter page using same cookie jar ==='
-          CHAPTER_CODE=$(curl -L -sS -D chapter.headers -b cookies.txt -c cookies.txt -o /dev/null -w '%{http_code}' "$CHAPTER" \
-            -H "User-Agent: $UA")
-          echo "chapter_status=$CHAPTER_CODE"
-          echo 'Set-Cookie names from chapter:'
-          awk 'BEGIN{IGNORECASE=1} /^set-cookie:/ {v=$0; sub(/^set-cookie:[[:space:]]*/,"",v); split(v,a,"="); print a[1]}' chapter.headers | sort -u || true
-          echo 'Cookie-jar names after chapter:'
-          awk 'BEGIN{FS="\t"} !/^#/ && NF>=7 {print $6}' cookies.txt | sort -u || true
-
-          echo '=== 4. Exact image request WITH fresh LunarX cookies ==='
-          COOKIE_CODE=$(curl -L -sS -b cookies.txt -o /dev/null -w '%{http_code}' "$IMG" \
-            -H "User-Agent: $UA" \
-            -H "Accept: $ACCEPT" \
-            -H 'Referer: https://lunarx.to/')
-          echo "status=$COOKIE_CODE"
-
-          echo '=== 5. Response headers from image with cookies (names only where sensitive) ==='
-          curl -L -sS -I -b cookies.txt "$IMG" \
-            -H "User-Agent: $UA" \
-            -H "Accept: $ACCEPT" \
-            -H 'Referer: https://lunarx.to/' \
-            | sed -E 's/^(set-cookie:[[:space:]]*[^=]+=).*/\1<redacted>/I' \
-            | head -n 40
+          echo '=== No-header sanity checks ==='
+          echo "vault_plain=$(curl -L -sS -o /dev/null -w '%{http_code}' "$VAULT")"
+          echo "api_plain=$(curl -L -sS -o /dev/null -w '%{http_code}' "$API")"
