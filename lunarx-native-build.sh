@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION_CODE=20
+VERSION_CODE=21
 NATIVE_DIR="native"
 MODULE="$NATIVE_DIR/src/en/lunarx"
 
@@ -13,29 +13,69 @@ p = Path('native/src/en/lunarx/build.gradle.kts')
 text = p.read_text()
 if 'val extVersionCode = 7' not in text:
     raise SystemExit('Expected LunarX upstream version 7 not found')
-text = text.replace('val extVersionCode = 7', 'val extVersionCode = 20', 1)
+text = text.replace('val extVersionCode = 7', 'val extVersionCode = 21', 1)
 p.write_text(text)
 
-# Match the successful browser image request supplied by the user:
-# root-site Referer, browser UA + image Accept, and no Origin header.
 source = Path('native/src/en/lunarx/src/main/kotlin/eu/kanade/tachiyomi/extension/en/lunarx/LunarX.kt')
 text = source.read_text()
-old = '''        return Request.Builder()
+
+# The reader API can return relative image paths. /cdn/... belongs on
+# vault.lunarx.to, whereas /api/... belongs on api.lunarx.to. The upstream
+# implementation sent every leading-slash path to api.lunarx.to, which
+# produces a 404 for real manga images.
+old_full = '''                        val full = when {
+                            u.startsWith("http") -> u
+                            u.startsWith("//") -> "https:" + u
+                            u.startsWith("/") -> apiUrl + u
+                            else -> apiUrl + "/" + u
+                        }'''
+new_full = '''                        val full = when {
+                            u.startsWith("https://api.lunarx.to/cdn/") ->
+                                u.replaceFirst("https://api.lunarx.to/cdn/", "https://vault.lunarx.to/cdn/")
+                            u.startsWith("http") -> u
+                            u.startsWith("//") -> "https:" + u
+                            u.startsWith("/cdn/") -> "https://vault.lunarx.to" + u
+                            u.startsWith("/api/") -> apiUrl + u
+                            u.startsWith("/") -> apiUrl + u
+                            u.startsWith("cdn/") -> "https://vault.lunarx.to/" + u
+                            else -> apiUrl + "/" + u
+                        }'''
+if old_full not in text:
+    raise SystemExit('Expected upstream LunarX image URL normalization block not found')
+text = text.replace(old_full, new_full, 1)
+
+# Match the successful browser image request supplied by the user:
+# root-site Referer, browser UA + image Accept, and no Origin header. Also
+# defensively correct any full API-host /cdn/ URL before requesting it.
+old_image = '''        val url = page.imageUrl
+            ?: throw IOException("LunarX: null image URL")
+        Log.d("LunarX", "image -> ${url.take(160)}")
+        // The CDN is only fed by browsers/native WebViews on the site, so
+        // mirror exactly what a browser <img> request sends: a browser
+        // User-Agent and the reader page as Referer, and no Origin header.
+        return Request.Builder()
             .url(url)
             .header("User-Agent", BROWSER_UA)
             .header("Referer", "$baseUrl$lastChapterUrl")
             .get()
             .build()'''
-new = '''        return Request.Builder()
+new_image = '''        val rawUrl = page.imageUrl
+            ?: throw IOException("LunarX: null image URL")
+        val url = rawUrl.replace(
+            "https://api.lunarx.to/cdn/",
+            "https://vault.lunarx.to/cdn/",
+        )
+        Log.d("LunarX", "image -> ${url.take(160)}")
+        return Request.Builder()
             .url(url)
             .header("User-Agent", BROWSER_UA)
             .header("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
             .header("Referer", "$baseUrl/")
             .get()
             .build()'''
-if old not in text:
+if old_image not in text:
     raise SystemExit('Expected upstream LunarX imageRequest block not found')
-text = text.replace(old, new, 1)
+text = text.replace(old_image, new_image, 1)
 
 old_ua = '''        private const val BROWSER_UA =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
@@ -94,8 +134,8 @@ entry = {
     'pkg': 'eu.kanade.tachiyomi.extension.en.lunarx',
     'apk': apk.name,
     'lang': 'en',
-    'code': 20,
-    'version': '1.4.20',
+    'code': 21,
+    'version': '1.4.21',
     'nsfw': 1,
     'sources': [{
         'name': 'LunarX',
@@ -114,8 +154,9 @@ entry = {
 }, indent=2) + '\n')
 (repo / 'README-LUNARX.md').write_text(
     '# LunarX for Tachimanga\n\n'
-    'This build uses the dedicated LunarX reader implementation from codegeasse1/codegeasse-mihon-extension, pinned to commit f9a96725074aee580b27ab39081175de9aee3e11, with extension version code 20 for testing.\n\n'
-    'Image requests are patched to match the successful browser capture: root Referer, Chromium/Edge UA, image Accept, and no Origin.\n\n'
+    'This build uses the dedicated LunarX reader implementation from codegeasse1/codegeasse-mihon-extension, pinned to commit f9a96725074aee580b27ab39081175de9aee3e11, with extension version code 21 for testing.\n\n'
+    'v1.4.21 routes /cdn/ image paths to vault.lunarx.to instead of api.lunarx.to. A GitHub network probe confirmed the same known image path returns HTTP 200 on Vault and HTTP 404 on the API host.\n\n'
+    'Image requests also match the successful browser capture: root Referer, Chromium/Edge UA, image Accept, and no Origin.\n\n'
     'Repository URL: `https://raw.githubusercontent.com/MT1946464/extensions-repo/lunarx/index.min.json`\n'
 )
 PY
@@ -128,5 +169,5 @@ if git diff --cached --quiet; then
   echo "No changes to publish"
   exit 0
 fi
-git commit -m "Publish native LunarX v1.4.20 browser image headers"
+git commit -m "Publish native LunarX v1.4.21 Vault CDN routing"
 git push origin HEAD:lunarx
